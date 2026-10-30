@@ -26,12 +26,19 @@ jobs:
           ANDROID_DIR=$(dirname $(find extracted_app -name gradlew | head -n 1))
           cd "$ANDROID_DIR"
           
-          # Increase memory to avoid GitHub Actions crashing at the last step
+          # FORCE Downgrade Gradle to 8.4 to fix the "Cannot mutate dependencies" error
+          echo "distributionBase=GRADLE_USER_HOME" > gradle/wrapper/gradle-wrapper.properties
+          echo "distributionPath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
+          echo "distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-bin.zip" >> gradle/wrapper/gradle-wrapper.properties
+          echo "zipStoreBase=GRADLE_USER_HOME" >> gradle/wrapper/gradle-wrapper.properties
+          echo "zipStorePath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
+
+          # Assign memory
           echo "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8" >> gradle.properties
 
           chmod +x gradlew
           
-          # Skip strict lint checks (-x lint) that block final APK generation
+          # Run build
           ./gradlew clean assembleDebug -x lint --no-daemon --stacktrace
 
       - name: Upload Debug APK
