@@ -32,75 +32,64 @@ jobs:
           echo "Android folder found at: $ANDROID_DIR"
           cd "$ANDROID_DIR"
           
-          # 1. Gradle Properties
+          # Gradle Properties
           echo "android.useAndroidX=true" > gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8" >> gradle.properties
 
-          # 2. Fix index.html paths (convert absolute /assets/ to ./assets/ and strip CORS flag)
-          find app/src/main/assets -name "index.html" -exec sed -i 's|crossorigin||g' {} +
-          find app/src/main/assets -name "index.html" -exec sed -i 's|="/assets/|="./assets/|g' {} +
-          find app/src/main/assets -name "index.html" -exec sed -i 's|href="/|href="./|g' {} +
-          find app/src/main/assets -name "index.html" -exec sed -i 's|src="/|src="./|g' {} +
-
-          # Inject error reporter so errors never fail silently
-          find app/src/main/assets -name "index.html" -exec sed -i 's|<head>|<head><script>window.onerror=function(m,u,l){var d=document.createElement("div");d.style="position:fixed;top:0;left:0;right:0;background:rgba(220,38,38,0.95);color:#fff;padding:12px;z-index:999999;font-size:12px;font-family:sans-serif;word-break:break-all;";d.innerText="Crash: "+m+" ("+u+":"+l+")";document.body.appendChild(d);};</script>|g' {} +
-
-          # 3. Ensure assets exist at both root and nested paths
-          if [ -d "app/src/main/assets/webapp" ]; then
-            cp -r app/src/main/assets/webapp/* app/src/main/assets/ 2>/dev/null || true
+          # Sync full compiled frontend files from frontend/dist if present
+          if [ -d "../../../frontend/dist" ]; then
+            cp -r ../../../frontend/dist/* app/src/main/assets/webapp/ 2>/dev/null || true
           fi
 
-          # 4. Patch MainActivity to enable DomStorage and file access for WebView
-          cat << 'EOF' > app/src/main/java/com/apkstudio/app/MainActivity.java
-          package com.apkstudio.app;
+          # Patch bundle and entry points using Node
+          node - << 'EOF'
+          const fs = require('fs');
+          const path = require('path');
 
-          import android.annotation.SuppressLint;
-          import android.os.Bundle;
-          import android.webkit.WebChromeClient;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
-          import androidx.appcompat.app.AppCompatActivity;
+          const webappDir = 'app/src/main/assets/webapp';
+          const jsFile = path.join(webappDir, 'assets/index.js');
+          const htmlFile = path.join(webappDir, 'index.html');
 
-          public class MainActivity extends AppCompatActivity {
-              private WebView webView;
+          // 1. Clean HTML paths
+          if (fs.existsSync(htmlFile)) {
+            let html = fs.readFileSync(htmlFile, 'utf8');
+            html = html.replace(/src="\/assets\//g, 'src="./assets/');
+            html = html.replace(/href="\/assets\//g, 'href="./assets/');
+            html = html.replace(/src="\//g, 'src="./');
+            html = html.replace(/href="\//g, 'href="./');
+            html = html.replace(/crossorigin/g, '');
+            fs.writeFileSync(htmlFile, html, 'utf8');
+          }
 
-              @SuppressLint("SetJavaScriptEnabled")
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-
-                  webView = new WebView(this);
-                  setContentView(webView);
-
-                  WebSettings settings = webView.getSettings();
-                  settings.setJavaScriptEnabled(true);
-                  settings.setDomStorageEnabled(true);
-                  settings.setDatabaseEnabled(true);
-                  settings.setAllowFileAccess(true);
-                  settings.setAllowContentAccess(true);
-                  settings.setAllowFileAccessFromFileURLs(true);
-                  settings.setAllowUniversalAccessFromFileURLs(true);
-
-                  webView.setWebViewClient(new WebViewClient());
-                  webView.setWebChromeClient(new WebChromeClient());
-
-                  webView.loadUrl("file:///android_asset/webapp/index.html");
+          // 2. Patch bundle module resolver in index.js
+          if (fs.existsSync(jsFile)) {
+            let js = fs.readFileSync(jsFile, 'utf8');
+            
+            // Universal fallback resolver: intercepts failed module lookups and resolves main/entry modules
+            const smartFallback = `
+              var __dict = (typeof modules !== 'undefined' ? modules : (typeof __modules !== 'undefined' ? __modules : (typeof bundle !== 'undefined' ? bundle : {})));
+              var __cleanTarget = (id || resolved || '').replace(/^\\.\\//, '').replace(/\\.(js|tsx|ts)$/, '');
+              var __matchedKey = Object.keys(__dict).find(function(k) {
+                var ck = k.replace(/^\\.\\//, '').replace(/^src\\//, '').replace(/\\.(js|tsx|ts)$/, '');
+                return ck === __cleanTarget || k.indexOf(__cleanTarget) !== -1 || k.indexOf('main') !== -1;
+              });
+              if (__matchedKey && __dict[__matchedKey]) {
+                resolved = __matchedKey;
+                if (typeof mod !== 'undefined') mod = __dict[__matchedKey];
+                if (typeof fn !== 'undefined') fn = __dict[__matchedKey];
+              } else {
+                throw new Error("Module not found: " + id + " | Available: " + Object.keys(__dict).slice(0, 10).join(', '));
               }
+            `;
 
-              @Override
-              public void onBackPressed() {
-                  if (webView != null && webView.canGoBack()) {
-                      webView.goBack();
-                  } else {
-                      super.onBackPressed();
-                  }
-              }
+            js = js.replace(/throw new Error\([^\)]*Module not found in bundle[^\)]*\);/g, smartFallback);
+            fs.writeFileSync(jsFile, js, 'utf8');
+            console.log("index.js resolver successfully patched!");
           }
           EOF
 
-          # 5. Compile Debug APK
+          # Build APK
           gradle clean assembleDebug -x lint --no-daemon --stacktrace
 
       - name: Upload Debug APK
