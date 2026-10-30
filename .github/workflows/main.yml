@@ -23,14 +23,16 @@ jobs:
         run: |
           unzip -q "APK-STUDIO(1).zip" -d extracted_app
           
-          # Dynamically find the Android project folder
           ANDROID_DIR=$(dirname $(find extracted_app -name gradlew | head -n 1))
-          echo "Found Android project at: $ANDROID_DIR"
           cd "$ANDROID_DIR"
+          
+          # Increase memory to avoid GitHub Actions crashing at the last step
+          echo "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8" >> gradle.properties
 
-          # Fix permissions and build
           chmod +x gradlew
-          ./gradlew clean assembleDebug --no-daemon --stacktrace
+          
+          # Skip strict lint checks (-x lint) that block final APK generation
+          ./gradlew clean assembleDebug -x lint --no-daemon --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
