@@ -32,12 +32,75 @@ jobs:
           echo "Android folder found at: $ANDROID_DIR"
           cd "$ANDROID_DIR"
           
-          # Enable AndroidX and Jetifier, and assign memory
+          # 1. Gradle Properties
           echo "android.useAndroidX=true" > gradle.properties
           echo "android.enableJetifier=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8" >> gradle.properties
-          
-          # Run build
+
+          # 2. Fix index.html paths (convert absolute /assets/ to ./assets/ and strip CORS flag)
+          find app/src/main/assets -name "index.html" -exec sed -i 's|crossorigin||g' {} +
+          find app/src/main/assets -name "index.html" -exec sed -i 's|="/assets/|="./assets/|g' {} +
+          find app/src/main/assets -name "index.html" -exec sed -i 's|href="/|href="./|g' {} +
+          find app/src/main/assets -name "index.html" -exec sed -i 's|src="/|src="./|g' {} +
+
+          # Inject error reporter so errors never fail silently
+          find app/src/main/assets -name "index.html" -exec sed -i 's|<head>|<head><script>window.onerror=function(m,u,l){var d=document.createElement("div");d.style="position:fixed;top:0;left:0;right:0;background:rgba(220,38,38,0.95);color:#fff;padding:12px;z-index:999999;font-size:12px;font-family:sans-serif;word-break:break-all;";d.innerText="Crash: "+m+" ("+u+":"+l+")";document.body.appendChild(d);};</script>|g' {} +
+
+          # 3. Ensure assets exist at both root and nested paths
+          if [ -d "app/src/main/assets/webapp" ]; then
+            cp -r app/src/main/assets/webapp/* app/src/main/assets/ 2>/dev/null || true
+          fi
+
+          # 4. Patch MainActivity to enable DomStorage and file access for WebView
+          cat << 'EOF' > app/src/main/java/com/apkstudio/app/MainActivity.java
+          package com.apkstudio.app;
+
+          import android.annotation.SuppressLint;
+          import android.os.Bundle;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import androidx.appcompat.app.AppCompatActivity;
+
+          public class MainActivity extends AppCompatActivity {
+              private WebView webView;
+
+              @SuppressLint("SetJavaScriptEnabled")
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  webView = new WebView(this);
+                  setContentView(webView);
+
+                  WebSettings settings = webView.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
+                  settings.setAllowFileAccessFromFileURLs(true);
+                  settings.setAllowUniversalAccessFromFileURLs(true);
+
+                  webView.setWebViewClient(new WebViewClient());
+                  webView.setWebChromeClient(new WebChromeClient());
+
+                  webView.loadUrl("file:///android_asset/webapp/index.html");
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (webView != null && webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+          }
+          EOF
+
+          # 5. Compile Debug APK
           gradle clean assembleDebug -x lint --no-daemon --stacktrace
 
       - name: Upload Debug APK
