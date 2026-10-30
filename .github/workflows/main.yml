@@ -19,21 +19,22 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Extract Project and Build
         run: |
           unzip -q "APK-STUDIO(1).zip" -d extracted_app
+          
+          # Dynamically find the Android project folder
           ANDROID_DIR=$(dirname $(find extracted_app -name gradlew | head -n 1))
+          echo "Found Android project at: $ANDROID_DIR"
           cd "$ANDROID_DIR"
 
+          # Fix permissions and build
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --no-build-cache --stacktrace
+          ./gradlew clean assembleDebug --no-daemon --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: extracted_app/**/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: erro
+          path: extracted_app/**/*.apk
+          if-no-files-found: error
