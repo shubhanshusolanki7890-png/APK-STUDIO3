@@ -19,27 +19,25 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      # Directly install stable Gradle 8.4 on the runner
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.4'
+
       - name: Extract Project and Build
         run: |
           unzip -q "APK-STUDIO(1).zip" -d extracted_app
           
           ANDROID_DIR=$(dirname $(find extracted_app -name gradlew | head -n 1))
+          echo "Android folder found at: $ANDROID_DIR"
           cd "$ANDROID_DIR"
           
-          # FORCE Downgrade Gradle to 8.4 to fix the "Cannot mutate dependencies" error
-          echo "distributionBase=GRADLE_USER_HOME" > gradle/wrapper/gradle-wrapper.properties
-          echo "distributionPath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
-          echo "distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-bin.zip" >> gradle/wrapper/gradle-wrapper.properties
-          echo "zipStoreBase=GRADLE_USER_HOME" >> gradle/wrapper/gradle-wrapper.properties
-          echo "zipStorePath=wrapper/dists" >> gradle/wrapper/gradle-wrapper.properties
-
-          # Assign memory
-          echo "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8" >> gradle.properties
-
-          chmod +x gradlew
+          # Force memory allocation to prevent crashes
+          echo "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8" > gradle.properties
           
-          # Run build
-          ./gradlew clean assembleDebug -x lint --no-daemon --stacktrace
+          # Use system 'gradle' instead of local './gradlew' to guarantee version 8.4
+          gradle clean assembleDebug -x lint --no-daemon --stacktrace
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
