@@ -10,38 +10,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Switched to Java 11 as older Android templates often fail on Java 17
-      - name: Set up JDK 11
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '11'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
       - name: Extract Project and Build
         run: |
           unzip -q "APK-STUDIO(1).zip" -d extracted_app
-          
-          # Find the exact folder containing gradlew
           ANDROID_DIR=$(dirname $(find extracted_app -name gradlew | head -n 1))
-          echo "Found Android project at: $ANDROID_DIR"
-          
-          # Go to that directory
+          echo "Android template directory: $ANDROID_DIR"
           cd "$ANDROID_DIR"
-          chmod +x gradlew
-          
-          # Print the build.gradle file so we can analyze it if it fails again
-          echo "--- APP BUILD.GRADLE CONTENTS ---"
-          cat app/build.gradle
-          echo "---------------------------------"
-          
-          # Run build with stacktrace for detailed error logs
-          ./gradlew clean assembleDebug --stacktrace
 
-      - name: Find and Upload APK
+          chmod +x gradlew
+
+          # Build without daemon & disable configuration cache to avoid dependency mutation conflict
+          ./gradlew assembleDebug --no-daemon --no-build-cache --stacktrace
+
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
           path: extracted_app/**/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
